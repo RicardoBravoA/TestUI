@@ -43,17 +43,31 @@ jobs:
           key: gradle-${{ runner.os }}-${{ hashFiles('Test-android/**/*.gradle*', 'Test-android/gradle/locks/*.lock') }}
           restore-keys: gradle-${{ runner.os }}-
 
+      # Si el job falla al TERMINAR el emulador ("stop: Not implemented"), es un bug conocido
+      # del action; los tests pueden haber pasado. Usamos continue-on-error + verificación abajo.
       - name: Run Android Emulator and UI tests
+        id: emulator-tests
         uses: reactivecircus/android-emulator-runner@v2
+        continue-on-error: true
         env:
           ANDROID_EMULATOR_WAIT_TIME_BEFORE_KILL: 600
         with:
-          api-level: 30
+          api-level: 31
           target: default
           arch: x86_64
           force-avd-creation: true
-          # Con KVM el emulador puede usar -accel; -gpu swiftshader_indirect es estable en runners sin GPU
-          emulator-options: -no-snapshot-save -no-window -gpu swiftshader_indirect -noaudio -no-boot-anim
+          emulator-options: -no-snapshot-save -no-window -gpu swiftshader_indirect -noaudio -no-boot-anim -no-metrics
           disable-animations: true
           working-directory: Test-android
           script: ./gradlew connectedDebugAndroidTest --no-daemon
+
+      - name: Fail job if tests actually failed
+        if: always() && steps.emulator-tests.outcome == 'failure'
+        run: |
+          EXIT_FILE="Test-android/app/build/outputs/androidTest-results/connected/debug/test-result-exit-code.txt"
+          if [ -f "$EXIT_FILE" ] && [ "$(cat "$EXIT_FILE")" = "0" ]; then
+            echo "Tests passed (exit code 0). Step failed only due to emulator shutdown (stop: Not implemented)."
+            exit 0
+          fi
+          echo "Tests failed or did not run. Failing job."
+          exit 1
